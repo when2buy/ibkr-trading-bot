@@ -40,30 +40,75 @@ def build_engine():
     return hub, data, orders, risk, strategy, reporter
 
 
-# ── simulation mode (no IBKR needed) ─────────────────────────────────────────
-async def run_simulation(strategy, data):
-    """Feed yfinance 5-min bars into strategy.on_bar() as if live."""
-    import yfinance as yf
-    import pandas as pd
+# ── simulation mode (prefer IBKR, fallback to yfinance) ──────────────────────
+async def run_simulation(strategy, data, hub):
+    """Feed historical bars into strategy.on_bar() as if live.
+    Prefers IBKR historical data; falls back to yfinance if gateway unavailable."""
     from ib_insync.objects import RealTimeBar
+    import pandas as pd
 
-    logger.info("🎮 SIMULATION MODE — replaying yfinance 5-min bars")
-    df = yf.Ticker('SPY').history(period='5d', interval='5m').dropna()
-    logger.info(f"Loaded {len(df)} bars")
+    symbol = 'SPY'
+    
+    # Try IBKR first
+    logger.info("🎮 SIMULATION MODE — fetching historical data...")
+    df = None
+    data_source = "unknown"
+    
+    if hub.is_connected or await _try_connect_readonly(hub):
+        try:
+            logger.info("📡 Using IBKR historical data")
+            # Get 5 days of 5-min bars from IBKR
+            bars = data.get_bars(symbol, period='5d', interval='5min')
+            if bars and len(bars) > 0:
+                df = pd.DataFrame([{
+                    'Open': b.open, 'High': b.high, 'Low': b.low,
+                    'Close': b.close, 'Volume': b.volume,
+                    'time': b.time
+                } for b in bars])
+                df.set_index('time', inplace=True)
+                data_source = "IBKR"
+                logger.info(f"✅ Loaded {len(df)} bars from IBKR")
+        except Exception as e:
+            logger.warning(f"IBKR historical data failed: {e}")
+    
+    # Fallback to yfinance
+    if df is None or len(df) == 0:
+        logger.info("📊 Falling back to yfinance")
+        import yfinance as yf
+        df = yf.Ticker(symbol).history(period='5d', interval='5m').dropna()
+        data_source = "yfinance (fallback)"
+        logger.info(f"✅ Loaded {len(df)} bars from yfinance")
 
+    if df is None or len(df) == 0:
+        logger.error("❌ No data available for simulation")
+        return
+
+    logger.info(f"🎮 Replaying {len(df)} bars from {data_source}")
+    
     for ts, row in df.iterrows():
         bar = type('Bar', (), {
             'close': row['Close'], 'open': row['Open'],
             'high': row['High'],   'low': row['Low'],
             'volume': row['Volume'], 'time': ts
         })()
-        strategy.on_bar('SPY', bar)
+        strategy.on_bar(symbol, bar)
         await asyncio.sleep(0.05)   # fast replay
 
     logger.info("Simulation complete")
+    logger.info(f"Data source: {data_source}")
     strategy.print_summary() if hasattr(strategy, 'print_summary') else None
     logger.info(f"Final P&L: ${strategy.get_pnl():+,.2f}")
     logger.info(f"Total fills: {len(strategy.orders.get_fills(strategy.strategy_id))}")
+
+
+async def _try_connect_readonly(hub):
+    """Try to connect to IBKR gateway in read-only mode."""
+    try:
+        await hub.connect()
+        return True
+    except Exception as e:
+        logger.warning(f"Could not connect to IBKR: {e}")
+        return False
 
 
 # ── live mode ─────────────────────────────────────────────────────────────────
@@ -107,7 +152,7 @@ async def main():
 
     if simulate:
         strategy.on_start()
-        await run_simulation(strategy, data)
+        await run_simulation(strategy, data, hub)
     else:
         await run_live(hub, strategy, reporter)
 
