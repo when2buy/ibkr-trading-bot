@@ -9,11 +9,12 @@ from ib_insync import MarketOrder, LimitOrder, StopOrder
 logger = logging.getLogger('engine.orders')
 
 class OrderManager:
-    def __init__(self, hub, risk_manager, account: str, log_dir: str):
+    def __init__(self, hub, risk_manager, account: str, log_dir: str, simulation_mode: bool = False):
         self.hub          = hub
         self.risk         = risk_manager
         self.account      = account
         self.log_dir      = log_dir
+        self.simulation_mode = simulation_mode  # Force simulation fills
         self._trades      = []   # list of fill dicts
         self._open_orders = {}   # orderId -> trade
         os.makedirs(log_dir, exist_ok=True)
@@ -33,9 +34,10 @@ class OrderManager:
         est_price = price if price else (
             self._get_last_price(contract.symbol) if self.hub.is_connected else 0.0)
 
-        if not self.hub.is_connected:
+        if self.simulation_mode or not self.hub.is_connected:
             # Simulation mode — record fill without sending to IBKR
-            sim_price = est_price or 0.0
+            # Use actual estimated price (from bar data) instead of 0.0
+            sim_price = est_price if est_price > 0 else 0.0
             record = {
                 'timestamp':  __import__('datetime').datetime.now().isoformat(),
                 'strategy':   strategy_id,
@@ -43,7 +45,7 @@ class OrderManager:
                 'side':       'BOT' if action == 'BUY' else 'SLD',
                 'qty':        qty,
                 'price':      sim_price,
-                'commission': 1.0,
+                'commission': 1.0,  # Flat $1 commission for simulation
             }
             self._trades.append(record)
             self._log_fill(record)

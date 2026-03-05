@@ -29,12 +29,12 @@ logging.basicConfig(
 logger = logging.getLogger('main')
 
 # ── wiring ────────────────────────────────────────────────────────────────────
-def build_engine():
+def build_engine(simulation_mode=False):
     hub      = ConnectionHub(config.IB_HOST, config.IB_PORT,
                              config.IB_CLIENT_ID, config.IB_ACCOUNT)
     risk     = RiskManager(config.MAX_TOTAL_EXPOSURE, config.MAX_PORTFOLIO_DD_PCT)
     data     = DataManager(hub)
-    orders   = OrderManager(hub, risk, config.IB_ACCOUNT, config.LOG_DIR)
+    orders   = OrderManager(hub, risk, config.IB_ACCOUNT, config.LOG_DIR, simulation_mode=simulation_mode)
     strategy = SPYMomentum(hub, data, orders, risk)
     reporter = Reporter([strategy], orders, risk, interval_sec=300)
     return hub, data, orders, risk, strategy, reporter
@@ -44,7 +44,6 @@ def build_engine():
 async def run_simulation(strategy, data, hub):
     """Feed historical bars into strategy.on_bar() as if live.
     Prefers IBKR historical data; falls back to yfinance if gateway unavailable."""
-    from ib_insync.objects import RealTimeBar
     import pandas as pd
 
     symbol = 'SPY'
@@ -54,24 +53,29 @@ async def run_simulation(strategy, data, hub):
     df = None
     data_source = "unknown"
     
-    if hub.is_connected or await _try_connect_readonly(hub):
+    # Try to connect if not already connected
+    if not hub.is_connected:
         try:
-            logger.info("📡 Using IBKR historical data")
-            # Get 5 days of 5-min bars from IBKR
-            bars = data.get_bars(symbol, period='5d', interval='5min')
-            if bars and len(bars) > 0:
-                df = pd.DataFrame([{
-                    'Open': b.open, 'High': b.high, 'Low': b.low,
-                    'Close': b.close, 'Volume': b.volume,
-                    'time': b.time
-                } for b in bars])
-                df.set_index('time', inplace=True)
+            logger.info("📡 Connecting to IBKR Gateway for historical data...")
+            await hub.connect()
+        except Exception as e:
+            logger.warning(f"Could not connect to IBKR: {e}")
+    
+    # DataManager.get_bars() already returns a DataFrame
+    if hub.is_connected:
+        try:
+            logger.info("📊 Fetching IBKR historical bars...")
+            df = data.get_bars(symbol, period='5 D', interval='5 mins')
+            if df is not None and len(df) > 0:
                 data_source = "IBKR"
                 logger.info(f"✅ Loaded {len(df)} bars from IBKR")
         except Exception as e:
             logger.warning(f"IBKR historical data failed: {e}")
+        finally:
+            # Disconnect after getting data (simulation doesn't need persistent connection)
+            hub.disconnect()
     
-    # Fallback to yfinance
+    # Fallback to yfinance if IBKR didn't work
     if df is None or len(df) == 0:
         logger.info("📊 Falling back to yfinance")
         import yfinance as yf
@@ -138,7 +142,7 @@ async def run_live(hub, strategy, reporter):
 # ── entry point ───────────────────────────────────────────────────────────────
 async def main():
     simulate = '--simulate' in sys.argv
-    hub, data, orders, risk, strategy, reporter = build_engine()
+    hub, data, orders, risk, strategy, reporter = build_engine(simulation_mode=simulate)
 
     def _shutdown(sig, frame):
         logger.info(f"\nShutdown signal received ({sig})")
