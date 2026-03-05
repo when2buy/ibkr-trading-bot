@@ -1,0 +1,20 @@
+[Unit]
+Description=IBKR Online Paper Trading Bot
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/openclaw/gpu-bot/workspace/ibkr-bot
+ExecStart=/opt/openclaw/gpu-bot/workspace/ibkr-bot/run_online_paper.sh
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/opt/openclaw/gpu-bot/workspace/ibkr-bot/logs/systemd_online.log
+StandardError=append:/opt/openclaw/gpu-bot/workspace/ibkr-bot/logs/systemd_online.log
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target
