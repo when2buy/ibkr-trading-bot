@@ -13,6 +13,7 @@ from engine.data_manager    import DataManager
 from engine.order_manager   import OrderManager
 from engine.risk_manager    import RiskManager
 from strategies.spy_momentum import SPYMomentum, _is_market_hours
+from strategies.spy_breakout import SPYBreakout
 from monitoring.reporter     import Reporter
 
 # ── logging setup ─────────────────────────────────────────────────────────────
@@ -35,24 +36,26 @@ def build_engine(simulation_mode=False):
     risk     = RiskManager(config.MAX_TOTAL_EXPOSURE, config.MAX_PORTFOLIO_DD_PCT)
     data     = DataManager(hub)
     orders   = OrderManager(hub, risk, config.IB_ACCOUNT, config.LOG_DIR, simulation_mode=simulation_mode)
-    strategy = SPYMomentum(hub, data, orders, risk)
-    reporter = Reporter([strategy], orders, risk, interval_sec=300)
-    return hub, data, orders, risk, strategy, reporter
+    momentum = SPYMomentum(hub, data, orders, risk)
+    breakout = SPYBreakout(hub, data, orders, risk)
+    strategies = [momentum, breakout]
+    reporter = Reporter(strategies, orders, risk, interval_sec=300)
+    return hub, data, orders, risk, strategies, reporter
 
 
 # ── simulation mode (prefer IBKR, fallback to yfinance) ──────────────────────
-async def run_simulation(strategy, data, hub):
-    """Feed historical bars into strategy.on_bar() as if live.
+async def run_simulation(strategies, data, hub):
+    """Feed historical bars into all strategies' on_bar() as if live.
     Prefers IBKR historical data; falls back to yfinance if gateway unavailable."""
     import pandas as pd
 
     symbol = 'SPY'
-    
+
     # Try IBKR first
     logger.info("🎮 SIMULATION MODE — fetching historical data...")
     df = None
     data_source = "unknown"
-    
+
     # Try to connect if not already connected
     if not hub.is_connected:
         try:
@@ -60,7 +63,7 @@ async def run_simulation(strategy, data, hub):
             await hub.connect()
         except Exception as e:
             logger.warning(f"Could not connect to IBKR: {e}")
-    
+
     # DataManager.get_bars() already returns a DataFrame
     if hub.is_connected:
         try:
@@ -74,7 +77,7 @@ async def run_simulation(strategy, data, hub):
         finally:
             # Disconnect after getting data (simulation doesn't need persistent connection)
             hub.disconnect()
-    
+
     # Fallback to yfinance if IBKR didn't work
     if df is None or len(df) == 0:
         logger.info("📊 Falling back to yfinance")
@@ -88,21 +91,25 @@ async def run_simulation(strategy, data, hub):
         return
 
     logger.info(f"🎮 Replaying {len(df)} bars from {data_source}")
-    
+
     for ts, row in df.iterrows():
         bar = type('Bar', (), {
             'close': row['Close'], 'open': row['Open'],
             'high': row['High'],   'low': row['Low'],
             'volume': row['Volume'], 'time': ts
         })()
-        strategy.on_bar(symbol, bar)
+        for strat in strategies:
+            strat.on_bar(symbol, bar)
         await asyncio.sleep(0.05)   # fast replay
 
     logger.info("Simulation complete")
     logger.info(f"Data source: {data_source}")
-    strategy.print_summary() if hasattr(strategy, 'print_summary') else None
-    logger.info(f"Final P&L: ${strategy.get_pnl():+,.2f}")
-    logger.info(f"Total fills: {len(strategy.orders.get_fills(strategy.strategy_id))}")
+    for strat in strategies:
+        if hasattr(strat, 'print_summary'):
+            strat.print_summary()
+        logger.info(f"[{strat.strategy_id}] Final P&L: ${strat.get_pnl():+,.2f}")
+        logger.info(f"[{strat.strategy_id}] Total fills: "
+                    f"{len(strat.orders.get_fills(strat.strategy_id))}")
 
 
 async def _try_connect_readonly(hub):
@@ -116,13 +123,15 @@ async def _try_connect_readonly(hub):
 
 
 # ── live mode ─────────────────────────────────────────────────────────────────
-async def run_live(hub, strategy, reporter):
+async def run_live(hub, strategies, reporter):
     await hub.connect()
-    strategy.on_start()
+    for strat in strategies:
+        strat.on_start()
     reporter_task = asyncio.create_task(reporter.run())
 
     logger.info("="*60)
     logger.info("  Engine running. Press Ctrl+C to stop.")
+    logger.info(f"  Strategies: {[s.strategy_id for s in strategies]}")
     logger.info(f"  Market hours: {_is_market_hours()}")
     logger.info("="*60)
 
@@ -135,19 +144,21 @@ async def run_live(hub, strategy, reporter):
     finally:
         reporter_task.cancel()
         reporter.print_summary()
-        strategy.orders.cancel_all(strategy.strategy_id)
+        for strat in strategies:
+            strat.orders.cancel_all(strat.strategy_id)
         hub.disconnect()
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
 async def main():
     simulate = '--simulate' in sys.argv
-    hub, data, orders, risk, strategy, reporter = build_engine(simulation_mode=simulate)
+    hub, data, orders, risk, strategies, reporter = build_engine(simulation_mode=simulate)
 
     def _shutdown(sig, frame):
         logger.info(f"\nShutdown signal received ({sig})")
         reporter.print_summary()
-        orders.cancel_all(strategy.strategy_id)
+        for strat in strategies:
+            orders.cancel_all(strat.strategy_id)
         hub.disconnect()
         sys.exit(0)
 
@@ -155,10 +166,11 @@ async def main():
     signal.signal(signal.SIGTERM, _shutdown)
 
     if simulate:
-        strategy.on_start()
-        await run_simulation(strategy, data, hub)
+        for strat in strategies:
+            strat.on_start()
+        await run_simulation(strategies, data, hub)
     else:
-        await run_live(hub, strategy, reporter)
+        await run_live(hub, strategies, reporter)
 
 
 if __name__ == '__main__':
