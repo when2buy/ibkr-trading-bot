@@ -232,12 +232,14 @@ python3 main.py --simulate
 
 ## 📚 Documentation
 
-- **[IBKR_GUIDE.md](IBKR_GUIDE.md)** - ⭐ **Complete IBKR setup & integration guide** (START HERE)
-- **[README_DUAL_MODE.md](README_DUAL_MODE.md)** - Quick start for dual-mode trading
-- **[DUAL_MODE_SETUP.md](DUAL_MODE_SETUP.md)** - Detailed setup guide
-- **[RESULTS.md](RESULTS.md)** - Trading results tracking
-- **[REPO_STRUCTURE.md](REPO_STRUCTURE.md)** - Code organization
-- **[TASK.md](TASK.md)** - Original requirements
+### Core Documentation
+- **[QUICKSTART.md](QUICKSTART.md)** - ⚡ Get running in 5 minutes
+- **[IBKR_GUIDE.md](IBKR_GUIDE.md)** - 📖 Complete setup & integration guide
+- **[RESULTS.md](RESULTS.md)** - 📊 Trading results tracking
+
+### Technical Documentation
+- **[docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md)** - Code architecture & organization
+- **[docs/archive/](docs/archive/)** - Historical development docs
 
 ---
 
