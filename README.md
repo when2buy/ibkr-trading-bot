@@ -232,6 +232,7 @@ python3 main.py --simulate
 
 ## 📚 Documentation
 
+- **[IBKR_GUIDE.md](IBKR_GUIDE.md)** - ⭐ **Complete IBKR setup & integration guide** (START HERE)
 - **[README_DUAL_MODE.md](README_DUAL_MODE.md)** - Quick start for dual-mode trading
 - **[DUAL_MODE_SETUP.md](DUAL_MODE_SETUP.md)** - Detailed setup guide
 - **[RESULTS.md](RESULTS.md)** - Trading results tracking
