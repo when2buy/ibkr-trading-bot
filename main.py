@@ -12,9 +12,11 @@ from engine.connection_hub  import ConnectionHub
 from engine.data_manager    import DataManager
 from engine.order_manager   import OrderManager
 from engine.risk_manager    import RiskManager
-from strategies.spy_momentum import SPYMomentum, _is_market_hours
-from strategies.spy_breakout import SPYBreakout
-from monitoring.reporter     import Reporter
+from strategies.spy_momentum      import SPYMomentum, _is_market_hours
+from strategies.spy_breakout       import SPYBreakout
+from strategies.spy_trend_pullback import SPYTrendPullback
+from strategies.spy_dual_ema       import SPYDualEMA
+from monitoring.reporter           import Reporter
 
 # ── logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -36,9 +38,11 @@ def build_engine(simulation_mode=False):
     risk     = RiskManager(config.MAX_TOTAL_EXPOSURE, config.MAX_PORTFOLIO_DD_PCT)
     data     = DataManager(hub)
     orders   = OrderManager(hub, risk, config.IB_ACCOUNT, config.LOG_DIR, simulation_mode=simulation_mode)
-    momentum = SPYMomentum(hub, data, orders, risk)
-    breakout = SPYBreakout(hub, data, orders, risk)
-    strategies = [momentum, breakout]
+    momentum      = SPYMomentum(hub, data, orders, risk)
+    breakout      = SPYBreakout(hub, data, orders, risk)
+    trend_pullback = SPYTrendPullback(hub, data, orders, risk)
+    dual_ema      = SPYDualEMA(hub, data, orders, risk)
+    strategies = [momentum, breakout, trend_pullback, dual_ema]
     reporter = Reporter(strategies, orders, risk, interval_sec=300)
     return hub, data, orders, risk, strategies, reporter
 
